@@ -1,6 +1,6 @@
 {
   "name": "leanrig",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Reduce Claude Code token usage and API costs: audit waste, install safe reversible cost-saving profiles, and manage token-saving tools like ccusage, caveman, and squeez — with full rollback",
   "keywords": [
     "claude-code",
