@@ -1,12 +1,12 @@
 {
   "name": "balanced",
   "extends": "safe",
-  "description": "Premium model stays the main coordinator; routine work (exploration, implementation, review) is delegated to cheaper subagents. Adds worker/reviewer agents, delegation + doctor skills, a CLAUDE.md delegation directive, statusline, and output caps. Does NOT set a top-level model — uses whatever you launch with.",
+  "description": "Premium model stays the main coordinator; routine labor (exploration, implementation) is delegated to cheaper subagents, while review inherits the main model so the quality gate is never downgraded. Adds worker/reviewer agents, delegation + doctor skills, a CLAUDE.md delegation directive, statusline, and output caps. Does NOT set a top-level model — uses whatever you launch with.",
   "assets": ["agents/worker", "agents/reviewer", "skills/delegate", "skills/doctor", "statusline"],
   "claudeMd": "delegation",
   "vars": {
     "workerModel": "sonnet",
-    "reviewerModel": "sonnet"
+    "reviewerModel": "inherit"
   },
   "settings": {
     "env": {
