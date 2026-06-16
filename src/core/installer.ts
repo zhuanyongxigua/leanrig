@@ -43,13 +43,40 @@ export interface SettingsPatch {
 }
 
 /**
- * Append a marker-delimited block to the user's CLAUDE.md. Appended, never
+ * Append a marker-delimited block to a user-owned text file. Appended, never
  * overwritten; idempotent (re-install is a no-op if the block is present);
- * rollback removes only the block, preserving surrounding user content.
+ * rollback removes only the block, preserving surrounding user content
+ * byte-for-byte (including comments and formatting outside the block).
+ *
+ * Used for Claude Code's CLAUDE.md and Codex's AGENTS.md (Markdown comment
+ * markers, the default), and for Codex's config.toml (TOML `#` comment markers
+ * — passed explicitly). This append-only approach is why a complex hand-written
+ * config.toml is never reparsed/reserialized: only a trailing block is added.
  */
 export interface ClaudeMdPatch {
   fileAbs: string;
   block: string;
+  /** Opening marker line. Defaults to the Markdown `<!-- leanrig:start -->`. */
+  markerStart?: string;
+  /** Closing marker line. Defaults to the Markdown `<!-- leanrig:end -->`. */
+  markerEnd?: string;
+  /**
+   * Place the block at the TOP of the file instead of the bottom. Required for
+   * TOML config.toml: a trailing block would be parsed as belonging to whatever
+   * `[table]` the file happens to end inside, so top-level scalar keys must be
+   * prepended (before any table header) to stay top-level. Defaults to false
+   * (append) for Markdown targets.
+   */
+  prepend?: boolean;
+}
+
+/** Resolved block-append computation for one patch (internal). */
+interface BlockPlan {
+  start: string;
+  end: string;
+  /** Final file content, or null when the block is already present (no-op). */
+  newContent: string | null;
+  unchanged: boolean;
 }
 
 export interface InstallPlan {
@@ -58,20 +85,43 @@ export interface InstallPlan {
   configDir: string;
   files: PlannedFile[];
   settings?: SettingsPatch;
+  /** Markdown block-append target (CLAUDE.md / AGENTS.md). */
   claudeMd?: ClaudeMdPatch;
+  /**
+   * A SECOND block-append target, used by the codex adapter for config.toml so
+   * a complex hand-written TOML file is never reparsed/reserialized — leanrig's
+   * keys are appended as a `#`-marker-wrapped trailing block instead (TOML's
+   * last-wins semantics make the appended scalars take effect). Same append /
+   * idempotent / surgical-rollback guarantees as `claudeMd`.
+   */
+  tomlBlock?: ClaudeMdPatch;
 }
 
-/** Marker comments wrapping leanrig's appended CLAUDE.md block. */
+/** Default (Markdown) marker comments wrapping leanrig's appended block. */
 export const CLAUDE_MD_START = "<!-- leanrig:start -->";
 export const CLAUDE_MD_END = "<!-- leanrig:end -->";
 
 /**
- * Final CLAUDE.md content after appending leanrig's block, or null when the
- * block is already present (idempotent no-op).
+ * Final file content after appending leanrig's block, or null when the block is
+ * already present (idempotent no-op). Markers are passed in so the same routine
+ * serves Markdown (CLAUDE.md/AGENTS.md) and TOML (config.toml).
  */
-function buildClaudeMdContent(current: string, block: string): string | null {
-  if (current.includes(CLAUDE_MD_START)) return null;
-  const wrapped = `${CLAUDE_MD_START}\n${block.trim()}\n${CLAUDE_MD_END}\n`;
+function buildClaudeMdContent(
+  current: string,
+  block: string,
+  markerStart: string,
+  markerEnd: string,
+  prepend = false
+): string | null {
+  if (current.includes(markerStart)) return null;
+  const wrapped = `${markerStart}\n${block.trim()}\n${markerEnd}\n`;
+  if (prepend) {
+    // Top-of-file: the block's top-level keys must precede any [table] header
+    // so they are parsed as top-level (TOML scoping). Keep the user's content
+    // verbatim after a blank-line separator.
+    const rest = current.replace(/^\s*/, "");
+    return rest.length > 0 ? `${wrapped}\n${rest}` : wrapped;
+  }
   const base = current.replace(/\s*$/, "");
   return base.length > 0 ? `${base}\n\n${wrapped}` : wrapped;
 }
@@ -222,16 +272,30 @@ export async function runInstall(
     }
   }
 
-  // Determine CLAUDE.md append action (append-only, idempotent).
-  let claudeMdNewContent: string | null = null;
-  let claudeMdUnchanged = true;
-  if (plan.claudeMd) {
-    const current = fs.existsSync(plan.claudeMd.fileAbs)
-      ? fs.readFileSync(plan.claudeMd.fileAbs, "utf8")
+  // Determine block-append actions (append-only, idempotent). Markers default
+  // to Markdown comments but a patch may override them (codex's config.toml uses
+  // TOML `#` comments). `claudeMd` is the Markdown target (CLAUDE.md/AGENTS.md);
+  // `tomlBlock` is the optional second target (codex config.toml).
+  const computeBlock = (patch: ClaudeMdPatch | undefined): BlockPlan => {
+    const start = patch?.markerStart ?? CLAUDE_MD_START;
+    const end = patch?.markerEnd ?? CLAUDE_MD_END;
+    if (!patch) return { start, end, newContent: null, unchanged: true };
+    const current = fs.existsSync(patch.fileAbs)
+      ? fs.readFileSync(patch.fileAbs, "utf8")
       : "";
-    claudeMdNewContent = buildClaudeMdContent(current, plan.claudeMd.block);
-    claudeMdUnchanged = claudeMdNewContent === null;
-  }
+    const newContent = buildClaudeMdContent(
+      current,
+      patch.block,
+      start,
+      end,
+      patch.prepend ?? false
+    );
+    return { start, end, newContent, unchanged: newContent === null };
+  };
+  const claudeMdPlan = computeBlock(plan.claudeMd);
+  const tomlBlockPlan = computeBlock(plan.tomlBlock);
+  const claudeMdNewContent = claudeMdPlan.newContent;
+  const claudeMdUnchanged = claudeMdPlan.unchanged;
 
   // Check if everything is unchanged (re-install same profile = no-op)
   const allFilesUnchanged = [...fileActions.values()].every(
@@ -258,8 +322,16 @@ export async function runInstall(
       const label = actionLabel(claudeMdUnchanged ? "unchanged" : "append");
       console.log(`  ${label}  ${plan.claudeMd.fileAbs} (${path.basename(plan.claudeMd.fileAbs)} block, appended)`);
     }
+    if (plan.tomlBlock) {
+      const label = actionLabel(tomlBlockPlan.unchanged ? "unchanged" : "append");
+      const where = plan.tomlBlock.prepend ? "prepended" : "appended";
+      console.log(`  ${label}  ${plan.tomlBlock.fileAbs} (${path.basename(plan.tomlBlock.fileAbs)} block, ${where})`);
+    }
     // Reflect the real replace/refuse behavior so the preview isn't misleading.
-    if (prevManifest && !(allFilesUnchanged && settingsUnchanged && claudeMdUnchanged)) {
+    if (
+      prevManifest &&
+      !(allFilesUnchanged && settingsUnchanged && claudeMdUnchanged && tomlBlockPlan.unchanged)
+    ) {
       if (prevManifest.profile !== plan.profile && !opts.force) {
         console.log(
           pc.yellow(
@@ -280,7 +352,7 @@ export async function runInstall(
   }
 
   // Check no-op BEFORE doing anything
-  if (allFilesUnchanged && settingsUnchanged && claudeMdUnchanged) {
+  if (allFilesUnchanged && settingsUnchanged && claudeMdUnchanged && tomlBlockPlan.unchanged) {
     findings.push({
       level: "ok",
       title: `Profile "${plan.profile}" already installed — nothing to do.`,
@@ -407,36 +479,48 @@ export async function runInstall(
     });
   }
 
-  // CLAUDE.md append (append-only; full file backed up for the markers-gone path)
-  let manifestClaudeMd: ManifestClaudeMd | undefined = undefined;
-  if (plan.claudeMd && claudeMdNewContent !== null) {
-    const fileAbs = plan.claudeMd.fileAbs;
-    const existedBefore = fs.existsSync(fileAbs);
-    let backupRelPath: string | null = null;
-    if (existedBefore) {
-      backupRelPath = `${path.basename(fileAbs)}.bak`;
-      backupFile(fileAbs, backupDir, backupRelPath);
+  // Block-append targets (append-only; full file backed up for the
+  // markers-gone path). Shared by the Markdown target (CLAUDE.md/AGENTS.md) and
+  // the optional TOML target (codex config.toml). Both basenames differ within
+  // a single install, so `${basename}.bak` backup names never collide.
+  const writeBlock = (
+    patch: ClaudeMdPatch | undefined,
+    blockPlan: BlockPlan
+  ): ManifestClaudeMd | undefined => {
+    if (patch && blockPlan.newContent !== null) {
+      const fileAbs = patch.fileAbs;
+      const existedBefore = fs.existsSync(fileAbs);
+      let backupRelPath: string | null = null;
+      if (existedBefore) {
+        backupRelPath = `${path.basename(fileAbs)}.bak`;
+        backupFile(fileAbs, backupDir, backupRelPath);
+      }
+      fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
+      fs.writeFileSync(fileAbs, blockPlan.newContent, "utf8");
+      findings.push({
+        level: "ok",
+        title: `${existedBefore ? "Appended leanrig block to" : "Created"}: ${fileAbs}`,
+      });
+      return {
+        path: fileAbs,
+        existedBefore,
+        backupRelPath,
+        writtenHash: hashContent(blockPlan.newContent),
+        blockStart: blockPlan.start,
+        blockEnd: blockPlan.end,
+      };
     }
-    fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
-    fs.writeFileSync(fileAbs, claudeMdNewContent, "utf8");
-    manifestClaudeMd = {
-      path: fileAbs,
-      existedBefore,
-      backupRelPath,
-      writtenHash: hashContent(claudeMdNewContent),
-      blockStart: CLAUDE_MD_START,
-      blockEnd: CLAUDE_MD_END,
-    };
-    findings.push({
-      level: "ok",
-      title: `${existedBefore ? "Appended leanrig block to" : "Created"}: ${fileAbs}`,
-    });
-  } else if (plan.claudeMd) {
-    findings.push({
-      level: "ok",
-      title: `${path.basename(plan.claudeMd.fileAbs)} block already present: ${plan.claudeMd.fileAbs}`,
-    });
-  }
+    if (patch) {
+      findings.push({
+        level: "ok",
+        title: `${path.basename(patch.fileAbs)} block already present: ${patch.fileAbs}`,
+      });
+    }
+    return undefined;
+  };
+
+  const manifestClaudeMd = writeBlock(plan.claudeMd, claudeMdPlan);
+  const manifestTomlBlock = writeBlock(plan.tomlBlock, tomlBlockPlan);
 
   // Write manifest
   const manifest: Manifest = {
@@ -448,6 +532,7 @@ export async function runInstall(
     files: manifestFiles,
     settings: manifestSettings,
     claudeMd: manifestClaudeMd,
+    tomlBlock: manifestTomlBlock,
   };
   writeManifest(backupDir, manifest);
 
@@ -600,14 +685,12 @@ export async function runRollback(
     }
   }
 
-  // CLAUDE.md block rollback: surgically remove only leanrig's marked block,
-  // preserving the user's surrounding content. If the markers are gone (user
-  // edited them away), fall back to the full backup under --force.
-  if (manifest.claudeMd) {
-    const c = manifest.claudeMd;
-    // The block mechanism is shared between Claude Code's CLAUDE.md and Codex's
-    // AGENTS.md; name messages after the actual file so codex output isn't
-    // mislabelled "CLAUDE.md".
+  // Block rollback: surgically remove only leanrig's marked block, preserving
+  // the user's surrounding content byte-for-byte. If the markers are gone (user
+  // edited them away), fall back to the full backup under --force. Shared by the
+  // Markdown target (CLAUDE.md/AGENTS.md) and the TOML target (codex config.toml);
+  // messages are named after the actual file. Returns true if it skipped.
+  const rollbackBlock = (c: ManifestClaudeMd): boolean => {
     const mdName = path.basename(c.path);
     if (!fs.existsSync(c.path)) {
       findings.push({
@@ -616,64 +699,68 @@ export async function runRollback(
           ? `${mdName} to restore is missing: ${c.path}`
           : `Already removed: ${c.path}`,
       });
-    } else {
-      const current = fs.readFileSync(c.path, "utf8");
-      const startIdx = current.indexOf(c.blockStart);
-      const endIdx = current.indexOf(c.blockEnd);
-      if (startIdx !== -1 && endIdx > startIdx) {
-        // Splice out [blockStart .. blockEnd], collapsing the blank-line
-        // separator we inserted before it.
-        const before = current.slice(0, startIdx).replace(/\n+$/, "");
-        const after = current
-          .slice(endIdx + c.blockEnd.length)
-          .replace(/^\n+/, "");
-        const joined =
-          before.length > 0 && after.length > 0
-            ? `${before}\n\n${after}`
-            : before + after;
-        if (joined.trim().length === 0) {
-          if (!c.existedBefore) {
-            deleteAndPruneDirs(c.path, manifest.configDir);
-            findings.push({
-              level: "ok",
-              title: `Deleted ${mdName} (created by leanrig): ${c.path}`,
-            });
-          } else if (c.backupRelPath) {
-            restoreFile(backupDir, c.backupRelPath, c.path);
-            findings.push({ level: "ok", title: `Restored ${mdName}: ${c.path}` });
-          }
-        } else {
-          fs.writeFileSync(c.path, joined.replace(/\s*$/, "\n"), "utf8");
-          findings.push({
-            level: "ok",
-            title: `Removed leanrig block from ${mdName}: ${c.path}`,
-          });
-        }
-      } else {
-        // Markers not found — user removed/altered them.
-        if (!opts.force) {
-          findings.push({
-            level: "warn",
-            title: `Skipping ${mdName} (leanrig block markers not found): ${c.path}`,
-            detail: "Use --force to restore the pre-install backup.",
-          });
-          skippedAny = true;
-        } else if (!c.existedBefore) {
+      return false;
+    }
+    const current = fs.readFileSync(c.path, "utf8");
+    const startIdx = current.indexOf(c.blockStart);
+    const endIdx = current.indexOf(c.blockEnd);
+    if (startIdx !== -1 && endIdx > startIdx) {
+      // Splice out [blockStart .. blockEnd], collapsing the blank-line
+      // separator we inserted before it.
+      const before = current.slice(0, startIdx).replace(/\n+$/, "");
+      const after = current
+        .slice(endIdx + c.blockEnd.length)
+        .replace(/^\n+/, "");
+      const joined =
+        before.length > 0 && after.length > 0
+          ? `${before}\n\n${after}`
+          : before + after;
+      if (joined.trim().length === 0) {
+        if (!c.existedBefore) {
           deleteAndPruneDirs(c.path, manifest.configDir);
           findings.push({
-            level: "warn",
-            title: `Deleted ${mdName} (--force, markers gone): ${c.path}`,
+            level: "ok",
+            title: `Deleted ${mdName} (created by leanrig): ${c.path}`,
           });
         } else if (c.backupRelPath) {
           restoreFile(backupDir, c.backupRelPath, c.path);
-          findings.push({
-            level: "warn",
-            title: `Restored ${mdName} from backup (--force): ${c.path}`,
-          });
+          findings.push({ level: "ok", title: `Restored ${mdName}: ${c.path}` });
         }
+      } else {
+        fs.writeFileSync(c.path, joined.replace(/\s*$/, "\n"), "utf8");
+        findings.push({
+          level: "ok",
+          title: `Removed leanrig block from ${mdName}: ${c.path}`,
+        });
       }
+      return false;
     }
-  }
+    // Markers not found — user removed/altered them.
+    if (!opts.force) {
+      findings.push({
+        level: "warn",
+        title: `Skipping ${mdName} (leanrig block markers not found): ${c.path}`,
+        detail: "Use --force to restore the pre-install backup.",
+      });
+      return true;
+    } else if (!c.existedBefore) {
+      deleteAndPruneDirs(c.path, manifest.configDir);
+      findings.push({
+        level: "warn",
+        title: `Deleted ${mdName} (--force, markers gone): ${c.path}`,
+      });
+    } else if (c.backupRelPath) {
+      restoreFile(backupDir, c.backupRelPath, c.path);
+      findings.push({
+        level: "warn",
+        title: `Restored ${mdName} from backup (--force): ${c.path}`,
+      });
+    }
+    return false;
+  };
+
+  if (manifest.claudeMd && rollbackBlock(manifest.claudeMd)) skippedAny = true;
+  if (manifest.tomlBlock && rollbackBlock(manifest.tomlBlock)) skippedAny = true;
 
   if (skippedAny) {
     // Partial rollback: leave the install registered AND its backup on disk so

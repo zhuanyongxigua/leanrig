@@ -39,6 +39,8 @@ export interface Manifest {
   files: ManifestFile[];
   settings?: ManifestSettings;
   claudeMd?: ManifestClaudeMd;
+  /** Second block-append target (codex config.toml); same shape as claudeMd. */
+  tomlBlock?: ManifestClaudeMd;
 }
 
 export function writeManifest(backupDir: string, manifest: Manifest): void {

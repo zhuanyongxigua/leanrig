@@ -6,10 +6,10 @@ import type { Finding } from "../../core/report.js";
 import type {
   InstallPlan,
   PlannedFile,
-  SettingsPatch,
   ClaudeMdPatch,
 } from "../../core/installer.js";
 import { deepMerge } from "../../core/jsonMerge.js";
+import { stringify as stringifyToml } from "smol-toml";
 
 // ---------------------------------------------------------------------------
 // Asset ID -> { src path relative to assets/codex/, target filename }
@@ -246,13 +246,31 @@ export const codexAdapter: Adapter = {
       });
     }
 
-    let settingsPatch: SettingsPatch | undefined;
+    // config.toml: append a `#`-marker-wrapped TOML block rather than merging.
+    // A user's config.toml is often a large hand-written file (model providers,
+    // dozens of trusted projects, MCP servers, comments). Reparsing/reserializing
+    // it via smol-toml would drop comments and reorder keys, so instead leanrig's
+    // keys are rendered as a trailing TOML fragment and appended; TOML's
+    // last-value-wins semantics make the appended scalar keys take effect, and
+    // rollback removes only that block — the rest of the file is byte-for-byte
+    // untouched. (This mirrors the AGENTS.md block-append below.)
+    let tomlBlockPatch: ClaudeMdPatch | undefined;
     if (Object.keys(resolved.settings).length > 0) {
       const resolvedSettings = substituteConfigDir(resolved.settings, configDir);
-      settingsPatch = {
+      // IMPORTANT: profile `settings` must stay FLAT (top-level scalar keys only).
+      // The block is prepended above the user's tables; if a profile ever nests a
+      // value, stringifyToml emits a `[table]` header mid-block and any scalar
+      // after it would scope under that table instead of top-level. Keep codex
+      // profile settings limited to top-level scalars (e.g. tool_output_token_limit).
+      const block = stringifyToml(resolvedSettings).trimEnd();
+      tomlBlockPatch = {
         fileAbs: path.join(configDir, "config.toml"),
-        merge: resolvedSettings,
-        format: "toml",
+        block,
+        markerStart: "# leanrig:start",
+        markerEnd: "# leanrig:end",
+        // Prepend: top-level keys must precede any [table] header to stay
+        // top-level (a trailing block would be scoped to the file's last table).
+        prepend: true,
       };
     }
 
@@ -278,8 +296,8 @@ export const codexAdapter: Adapter = {
       profile: profileName,
       configDir,
       files: plannedFiles,
-      settings: settingsPatch,
       claudeMd: agentsMdPatch,
+      tomlBlock: tomlBlockPatch,
     };
   },
 };
