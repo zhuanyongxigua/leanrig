@@ -10,7 +10,6 @@ import type {
   ClaudeMdPatch,
 } from "../../core/installer.js";
 import { deepMerge } from "../../core/jsonMerge.js";
-import { realRunner, type CommandRunner } from "../../core/tools.js";
 
 // ---------------------------------------------------------------------------
 // Asset ID -> { src path relative to assets/codex/, target filename }
@@ -142,39 +141,27 @@ function getConfigDir(): string {
   return process.env["CODEX_HOME"] ?? path.join(homeDir(), ".codex");
 }
 
-/**
- * Probe `codex --version` for a richer detect detail. Read-only; failures are
- * swallowed (the config-dir existence check is the source of truth for
- * "installed"). Output looks like `codex-cli 0.58.0`.
- */
-function probeVersion(runner: CommandRunner): string | undefined {
-  try {
-    const r = runner.run(["codex", "--version"]);
-    if (r.code === 0) {
-      const line = r.stdout.trim().split("\n")[0];
-      return line || undefined;
-    }
-  } catch {
-    /* not on PATH — ignore */
-  }
-  return undefined;
-}
-
 // ---------------------------------------------------------------------------
 // Adapter implementation
 // ---------------------------------------------------------------------------
+//
+// NOTE: detect()/doctor() deliberately do NOT shell out to `codex --version`.
+// `leanrig doctor` advertises itself as a read-only audit, but the codex CLI's
+// own startup is not side-effect-free (observed on codex-cli 0.139.0: a plain
+// `codex --version` attempts to create PATH aliases). Probing it would break the
+// read-only contract, so installation is detected purely from the config dir's
+// existence — same approach as the claude-code adapter.
 export const codexAdapter: Adapter = {
   name: "codex",
 
   async detect(): Promise<DetectResult> {
     const configDir = getConfigDir();
     const installed = fs.existsSync(configDir);
-    const version = probeVersion(realRunner);
     return {
       installed,
       configDir,
       detail: installed
-        ? `Config dir found: ${configDir}${version ? ` (${version})` : ""}`
+        ? `Config dir found: ${configDir}`
         : `Config dir not found: ${configDir}`,
     };
   },
@@ -182,13 +169,12 @@ export const codexAdapter: Adapter = {
   async doctor(): Promise<Finding[]> {
     const configDir = getConfigDir();
     const installed = fs.existsSync(configDir);
-    const version = probeVersion(realRunner);
 
     const header: Finding = installed
       ? {
           level: "info",
           title: "Codex detected",
-          detail: `${configDir}${version ? ` (${version})` : ""}`,
+          detail: configDir,
         }
       : {
           level: "warn",
