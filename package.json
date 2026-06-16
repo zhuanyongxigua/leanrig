@@ -1,10 +1,12 @@
 {
   "name": "leanrig",
   "version": "0.4.1",
-  "description": "Reduce Claude Code token usage and API costs: audit waste, install safe reversible cost-saving profiles, and manage token-saving tools like ccusage, caveman, and squeez — with full rollback",
+  "description": "Cut AI coding-agent token usage and API costs with subagent delegation: keep the premium model as coordinator and route routine work to cheaper, better-fit models. Installs safe, reversible cost-saving profiles with full rollback. Supports Claude Code and Codex",
   "keywords": [
     "claude-code",
     "claude",
+    "codex",
+    "subagent-delegation",
     "token-usage",
     "token-optimization",
     "cost-optimization",
@@ -46,7 +48,8 @@
   "dependencies": {
     "commander": "^12.1.0",
     "diff": "^7.0.0",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "smol-toml": "^1.6.1"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",

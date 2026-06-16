@@ -10,6 +10,7 @@ import {
   deleteAndPruneDirs,
 } from "./backup.js";
 import { deepMerge } from "./jsonMerge.js";
+import { mergeTomlString } from "./tomlMerge.js";
 import {
   writeManifest,
   readManifest,
@@ -31,6 +32,14 @@ export interface PlannedFile {
 export interface SettingsPatch {
   fileAbs: string;
   merge: Record<string, unknown>;
+  /**
+   * Serialization format of the target settings file. Defaults to "json"
+   * (Claude Code's settings.json). "toml" is used by the codex adapter, whose
+   * config lives in ~/.codex/config.toml. The deep-merge semantics are identical;
+   * only parse/stringify differ. Backup, hashing, rollback, and diff operate on
+   * raw bytes and are format-agnostic.
+   */
+  format?: "json" | "toml";
 }
 
 /**
@@ -98,18 +107,22 @@ function loadPreviousManifest(harness: string): Manifest | null {
   return manifest;
 }
 
-/** Compute what the merged settings content would be. */
+/** Compute what the merged settings content would be (JSON or TOML). */
 function computeMergedSettings(
   fileAbs: string,
-  merge: Record<string, unknown>
+  merge: Record<string, unknown>,
+  format: "json" | "toml" = "json"
 ): string {
+  const existing = fs.existsSync(fileAbs)
+    ? fs.readFileSync(fileAbs, "utf8")
+    : "";
+  if (format === "toml") {
+    return mergeTomlString(existing, merge);
+  }
   let base: Record<string, unknown> = {};
-  if (fs.existsSync(fileAbs)) {
+  if (existing.trim().length > 0) {
     try {
-      base = JSON.parse(fs.readFileSync(fileAbs, "utf8")) as Record<
-        string,
-        unknown
-      >;
+      base = JSON.parse(existing) as Record<string, unknown>;
     } catch {
       base = {};
     }
@@ -195,7 +208,8 @@ export async function runInstall(
   if (plan.settings) {
     mergedSettingsContent = computeMergedSettings(
       plan.settings.fileAbs,
-      plan.settings.merge
+      plan.settings.merge,
+      plan.settings.format ?? "json"
     );
     if (fs.existsSync(plan.settings.fileAbs)) {
       const currentHash = hashFile(plan.settings.fileAbs);
@@ -242,7 +256,7 @@ export async function runInstall(
     }
     if (plan.claudeMd) {
       const label = actionLabel(claudeMdUnchanged ? "unchanged" : "append");
-      console.log(`  ${label}  ${plan.claudeMd.fileAbs} (CLAUDE.md block, appended)`);
+      console.log(`  ${label}  ${plan.claudeMd.fileAbs} (${path.basename(plan.claudeMd.fileAbs)} block, appended)`);
     }
     // Reflect the real replace/refuse behavior so the preview isn't misleading.
     if (prevManifest && !(allFilesUnchanged && settingsUnchanged && claudeMdUnchanged)) {
@@ -370,7 +384,7 @@ export async function runInstall(
     const existedBefore = fs.existsSync(plan.settings.fileAbs);
     let backupRelPath: string | null = null;
     if (existedBefore) {
-      backupRelPath = "settings.json.bak";
+      backupRelPath = `${path.basename(plan.settings.fileAbs)}.bak`;
       backupFile(plan.settings.fileAbs, backupDir, backupRelPath);
     }
     fs.mkdirSync(path.dirname(plan.settings.fileAbs), { recursive: true });
@@ -400,7 +414,7 @@ export async function runInstall(
     const existedBefore = fs.existsSync(fileAbs);
     let backupRelPath: string | null = null;
     if (existedBefore) {
-      backupRelPath = "CLAUDE.md.bak";
+      backupRelPath = `${path.basename(fileAbs)}.bak`;
       backupFile(fileAbs, backupDir, backupRelPath);
     }
     fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
@@ -420,7 +434,7 @@ export async function runInstall(
   } else if (plan.claudeMd) {
     findings.push({
       level: "ok",
-      title: `CLAUDE.md block already present: ${plan.claudeMd.fileAbs}`,
+      title: `${path.basename(plan.claudeMd.fileAbs)} block already present: ${plan.claudeMd.fileAbs}`,
     });
   }
 
@@ -591,11 +605,15 @@ export async function runRollback(
   // edited them away), fall back to the full backup under --force.
   if (manifest.claudeMd) {
     const c = manifest.claudeMd;
+    // The block mechanism is shared between Claude Code's CLAUDE.md and Codex's
+    // AGENTS.md; name messages after the actual file so codex output isn't
+    // mislabelled "CLAUDE.md".
+    const mdName = path.basename(c.path);
     if (!fs.existsSync(c.path)) {
       findings.push({
         level: c.existedBefore ? "warn" : "ok",
         title: c.existedBefore
-          ? `CLAUDE.md to restore is missing: ${c.path}`
+          ? `${mdName} to restore is missing: ${c.path}`
           : `Already removed: ${c.path}`,
       });
     } else {
@@ -618,17 +636,17 @@ export async function runRollback(
             deleteAndPruneDirs(c.path, manifest.configDir);
             findings.push({
               level: "ok",
-              title: `Deleted CLAUDE.md (created by leanrig): ${c.path}`,
+              title: `Deleted ${mdName} (created by leanrig): ${c.path}`,
             });
           } else if (c.backupRelPath) {
             restoreFile(backupDir, c.backupRelPath, c.path);
-            findings.push({ level: "ok", title: `Restored CLAUDE.md: ${c.path}` });
+            findings.push({ level: "ok", title: `Restored ${mdName}: ${c.path}` });
           }
         } else {
           fs.writeFileSync(c.path, joined.replace(/\s*$/, "\n"), "utf8");
           findings.push({
             level: "ok",
-            title: `Removed leanrig block from CLAUDE.md: ${c.path}`,
+            title: `Removed leanrig block from ${mdName}: ${c.path}`,
           });
         }
       } else {
@@ -636,7 +654,7 @@ export async function runRollback(
         if (!opts.force) {
           findings.push({
             level: "warn",
-            title: `Skipping CLAUDE.md (leanrig block markers not found): ${c.path}`,
+            title: `Skipping ${mdName} (leanrig block markers not found): ${c.path}`,
             detail: "Use --force to restore the pre-install backup.",
           });
           skippedAny = true;
@@ -644,13 +662,13 @@ export async function runRollback(
           deleteAndPruneDirs(c.path, manifest.configDir);
           findings.push({
             level: "warn",
-            title: `Deleted CLAUDE.md (--force, markers gone): ${c.path}`,
+            title: `Deleted ${mdName} (--force, markers gone): ${c.path}`,
           });
         } else if (c.backupRelPath) {
           restoreFile(backupDir, c.backupRelPath, c.path);
           findings.push({
             level: "warn",
-            title: `Restored CLAUDE.md from backup (--force): ${c.path}`,
+            title: `Restored ${mdName} from backup (--force): ${c.path}`,
           });
         }
       }

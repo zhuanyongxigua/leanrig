@@ -1,0 +1,13 @@
+{
+  "name": "balanced",
+  "extends": "safe",
+  "description": "Premium model stays the main coordinator; routine labor (exploration, implementation) is delegated to cheaper subagents, while review inherits the main model so the quality gate is never downgraded. Adds worker/reviewer subagents and a reversible delegation directive appended to AGENTS.md. Does NOT set a top-level model — uses whatever you launch Codex with.",
+  "assets": ["agents/worker", "agents/reviewer"],
+  "agentsMd": "delegation",
+  "vars": {
+    "workerModel": "gpt-5.4"
+  },
+  "settings": {
+    "tool_output_token_limit": 12000
+  }
+}

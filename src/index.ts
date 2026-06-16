@@ -7,6 +7,7 @@ import {
   listAdapters,
 } from "./adapters/types.js";
 import { claudeCodeAdapter } from "./adapters/claude-code/index.js";
+import { codexAdapter } from "./adapters/codex/index.js";
 import { renderFindings } from "./core/report.js";
 import {
   runInstall,
@@ -16,6 +17,7 @@ import {
 
 // Register built-in adapters
 registerAdapter(claudeCodeAdapter);
+registerAdapter(codexAdapter);
 
 const DEFAULT_HARNESS = "claude-code";
 

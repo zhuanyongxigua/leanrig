@@ -5,9 +5,9 @@
 
 **Put your AI coding agent on a budget.**
 
-LeanRig reduces Claude Code token usage and API costs. It audits where your setup wastes tokens, installs safe and reversible cost-saving profiles — cheap model routing, concise output, tool-output caps — and points you to the best community token-saving tools (ccusage, caveman, squeez, lean-ctx) with their official install commands. Everything LeanRig writes is backed up and rollback-able; third-party tools you install yourself, through their own channels.
+LeanRig reduces AI coding-agent token usage and API costs. Its core idea is **subagent delegation**: your premium model stays the coordinator and does the judgment, while routine, low-stakes work — search, file discovery, implementation, log reading — is delegated to cheaper, better-fit models. It audits where your setup wastes tokens and installs safe, reversible cost-saving profiles (cheap-model routing, concise output, tool-output caps). Everything LeanRig writes is backed up and rollback-able.
 
-Claude Code first. Harness-agnostic by design.
+Built for Claude Code and Codex, via a harness-agnostic adapter design.
 
 ## Install
 
@@ -46,13 +46,13 @@ LeanRig gives your agent a budget.
 
 LeanRig installs safe, reversible cost-saving profiles for agent harnesses.
 
-For Claude Code, it can configure:
+The core mechanism is **subagent delegation** — the premium model coordinates and judges; cheaper, better-fit models do the labor. On Claude Code (shipped) it can configure:
 
-- cheap exploration agents
-- bounded worker subagents
-- independent reviewers
+- a delegation directive + skill (so the main model actually routes labor to subagents)
+- cheap exploration agents (search, file discovery, log reading)
+- bounded worker subagents (implementation, tests)
+- independent reviewers (first-pass review)
 - terse output styles
-- delegation skills
 - tool-output limits
 - context hygiene rules
 - usage-aware statusline
@@ -188,16 +188,18 @@ LeanRig never deletes your files, never overwrites modified files without `--for
 
 ## Harness-agnostic
 
-LeanRig is designed around adapters.
+LeanRig is designed around adapters. The same delegation idea — premium coordinator, cheap labor — maps onto any agent that has model routing, profiles, and a project-instruction file.
 
-Today: `claude-code`.
+Shipped: `claude-code`, `codex`.
 
-Planned: `codex`, `gemini-cli`, `opencode`, `cursor-agent`, `aider`, `cline`.
+Planned: `gemini-cli`, `opencode`, `cursor-agent`, `aider`, `cline`.
 
 ```bash
 leanrig install <harness> --profile <profile>
 leanrig doctor <harness>
 ```
+
+The `codex` adapter delegates to Codex CLI's native subagents (`~/.codex/agents/*.toml`), caps tool output via `config.toml` (`tool_output_token_limit`), and appends the delegation directive to `AGENTS.md` — all backed up and reversible. Codex has no command-backed statusline or output-style, so those Claude Code pieces have no codex equivalent; the reviewer subagent omits its model so it inherits your main session model (the review gate is never downgraded).
 
 ## Philosophy
 

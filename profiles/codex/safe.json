@@ -1,0 +1,11 @@
+{
+  "name": "safe",
+  "description": "Minimal, reversible defaults for Codex: a cheap read-only explorer subagent plus a tool-output token cap. No model is forced on the main session.",
+  "assets": ["agents/explorer"],
+  "vars": {
+    "explorerModel": "gpt-5.4-mini"
+  },
+  "settings": {
+    "tool_output_token_limit": 12000
+  }
+}

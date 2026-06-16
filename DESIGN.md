@@ -29,7 +29,12 @@ Default harness: `claude-code`.
 ## Stack
 
 - TypeScript, Node >= 20, ESM (`"type": "module"`).
-- Runtime deps: `commander`, `picocolors`, `diff`. Nothing else.
+- Runtime deps: `commander`, `picocolors`, `diff`, `smol-toml`. Nothing else.
+  - `smol-toml` (zero-dependency, ESM, parse+serialize) was added for the **codex** adapter:
+    Codex config lives in `~/.codex/config.toml`, and per-key merge of TOML (mirroring the JSON
+    `deepMerge` used for Claude Code's `settings.json`) needs a real TOML reader/writer. Chosen over
+    `@iarna/toml` for being actively maintained, ESM-native, and supporting serialization. This is the
+    one deliberate widening of the "nothing else" rule; any further runtime dep needs the same justification.
 - Dev deps: `typescript`, `vitest`, `@types/node`.
 - Build: `tsc` → `dist/`. Bin: `dist/index.js` (shebang).
 - npm package `leanrig` (same as the CLI command; GitHub repo may differ); `files`: `dist`, `assets`, `profiles`, `README.md`, `LICENSE`.
