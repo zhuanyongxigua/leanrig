@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
 import { program } from "commander";
 import pc from "picocolors";
 import {
@@ -6,6 +8,7 @@ import {
   getAdapter,
   listAdapters,
 } from "./adapters/types.js";
+import { packageRoot } from "./core/paths.js";
 import { claudeCodeAdapter } from "./adapters/claude-code/index.js";
 import { codexAdapter } from "./adapters/codex/index.js";
 import { renderFindings } from "./core/report.js";
@@ -53,10 +56,24 @@ function action<A extends unknown[]>(
   };
 }
 
+// Single source of truth: read the version from package.json so the CLI
+// `--version` can never drift from the published package version.
+function readPackageVersion(): string {
+  try {
+    const pkgPath = path.join(packageRoot(), "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
+      version?: string;
+    };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 program
   .name("leanrig")
   .description("Install safe, reversible cost-control profiles into AI coding agent harnesses.")
-  .version("0.4.0");
+  .version(readPackageVersion());
 
 // doctor
 program
