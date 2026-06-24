@@ -1,6 +1,6 @@
 {
   "name": "leanrig",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Cut AI coding-agent token usage and API costs with subagent delegation: keep the premium model as coordinator and route routine work to cheaper, better-fit models. Installs safe, reversible cost-saving profiles with full rollback. Supports Claude Code and Codex",
   "keywords": [
     "claude-code",
