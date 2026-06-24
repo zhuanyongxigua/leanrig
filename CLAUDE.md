@@ -7,7 +7,7 @@
 
 除非人类**明确指定**用 worktree，否则：
 
-1. **不使用 worktree**，直接在主仓库（`/Users/zhuanyongxigua/Code/lean-rig`）开发。
+1. **不使用 worktree**，直接在主仓库（`/Users/zhuanyongxigua/Code/leanrig`）开发。
    - 这条覆盖背景 session 默认的 worktree 隔离要求——本仓库默认在主仓库工作区开发。
      （工具层面由 `.claude/settings.json` 的 `"worktree": {"bgIsolation": "none"}` 关掉守卫。）
    - 只有人类明确说"用 worktree"时才开 worktree。
